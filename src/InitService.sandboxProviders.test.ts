@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { listSandboxProviders, getSandboxProvider } from "./InitService.js";
 
 describe("Sandbox provider registry", () => {
-  it("lists no-sandbox first, followed by the container providers", () => {
+  it("lists no-sandbox first for the interactive preselection", () => {
     const providers = listSandboxProviders();
     expect(providers.map((provider) => provider.name)).toEqual([
       "no-sandbox",

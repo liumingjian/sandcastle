@@ -109,15 +109,6 @@ const sandboxOption = Options.text("sandbox").pipe(
   Options.optional,
 );
 
-export const getSandboxProviderSelectConfig = () => ({
-  message: "Select a sandbox provider:",
-  initialValue: "no-sandbox",
-  options: listSandboxProviders().map((provider) => ({
-    value: provider.name,
-    label: provider.label,
-  })),
-});
-
 const issueTrackerOption = Options.text("issue-tracker").pipe(
   Options.withDescription(
     "Issue tracker to use (e.g. github-issues, beads, custom)",
@@ -330,7 +321,14 @@ const initCommand = Command.make(
           yield* failIfNonInteractive("--sandbox");
         }
         const selected = yield* Effect.promise(() =>
-          clack.select(getSandboxProviderSelectConfig()),
+          clack.select({
+            message: "Select a sandbox provider:",
+            initialValue: listSandboxProviders()[0]!.name,
+            options: listSandboxProviders().map((provider) => ({
+              value: provider.name,
+              label: provider.label,
+            })),
+          }),
         );
         if (clack.isCancel(selected)) {
           yield* Effect.fail(

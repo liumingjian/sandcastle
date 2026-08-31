@@ -2333,6 +2333,7 @@ describe("InitService scaffold", () => {
           'import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox"',
         );
         expect(mainTs).toContain("sandbox: noSandbox()");
+        expect(mainTs).toContain('branchStrategy: { type: "merge-to-head" }');
         expect(mainTs).toContain(option);
 
         const envExample = await readFile(
@@ -2372,6 +2373,34 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("permissionMode");
       expect(mainTs).not.toContain("approvalsReviewer");
     });
+
+    it.each([
+      {
+        provider: dockerProvider,
+        factory: "docker",
+        containerfile: "Dockerfile",
+      },
+      {
+        provider: podmanProvider,
+        factory: "podman",
+        containerfile: "Containerfile",
+      },
+    ])(
+      "keeps the $factory blank scaffold container workflow unchanged",
+      async ({ provider, factory, containerfile }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, { sandboxProvider: provider });
+
+        const configDir = join(dir, ".sandcastle");
+        const files = await readdir(configDir);
+        const mainTs = await readFile(join(configDir, "main.mts"), "utf-8");
+
+        expect(files).toContain(containerfile);
+        expect(mainTs).toContain(`sandbox: ${factory}()`);
+        expect(mainTs).not.toContain("branchStrategy");
+        expect(mainTs).not.toContain("permissionMode");
+      },
+    );
 
     it.each([
       {
