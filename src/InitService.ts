@@ -805,24 +805,39 @@ const copyTemplateFiles = (
   templateDir: string,
   destDir: string,
   mainFilename: string,
+  sandboxProviderName: string,
 ): Effect.Effect<void, Error, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const files = yield* fs
       .readDirectory(templateDir)
       .pipe(Effect.mapError((e) => new Error(e.message)));
+    const providerVariant = (filename: string): string => {
+      const extensionIndex = filename.lastIndexOf(".");
+      if (extensionIndex === -1) return filename;
+      return `${filename.slice(0, extensionIndex)}.${sandboxProviderName}${filename.slice(extensionIndex)}`;
+    };
+    const isProviderVariant = (filename: string): boolean =>
+      SANDBOX_PROVIDER_REGISTRY.some((provider) =>
+        filename.includes(`.${provider.name}.`),
+      );
+    const sourceFiles = new Set(files);
+
     yield* Effect.all(
       files
         .filter(
           (f) =>
             f !== "template.json" &&
             f !== ".env.example" &&
+            !isProviderVariant(f) &&
             !COMPILED_FILE_EXTENSIONS.some((ext) => f.endsWith(ext)),
         )
-        .map((f) => {
-          const destName = f === "main.mts" ? mainFilename : f;
+        .map((destFile) => {
+          const variant = providerVariant(destFile);
+          const sourceFile = sourceFiles.has(variant) ? variant : destFile;
+          const destName = destFile === "main.mts" ? mainFilename : destFile;
           return fs
-            .copyFile(join(templateDir, f), join(destDir, destName))
+            .copyFile(join(templateDir, sourceFile), join(destDir, destName))
             .pipe(Effect.mapError((e) => new Error(e.message)));
         }),
       { concurrency: "unbounded" },
@@ -1183,7 +1198,12 @@ export const scaffold = (
       fs
         .writeFileString(join(configDir, ".env.example"), envExampleContent)
         .pipe(Effect.mapError((e) => new Error(e.message))),
-      copyTemplateFiles(templateDir, configDir, mainFilename),
+      copyTemplateFiles(
+        templateDir,
+        configDir,
+        mainFilename,
+        sandboxProvider.name,
+      ),
     ];
     if (sandboxProvider.containerfileName) {
       scaffoldEffects.push(

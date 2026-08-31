@@ -2373,6 +2373,110 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("approvalsReviewer");
     });
 
+    it.each([
+      {
+        templateName: "simple-loop",
+        agent: claudeCodeAgent,
+        expectedAgentOption: 'permissionMode: "auto"',
+      },
+      {
+        templateName: "simple-loop",
+        agent: codexAgent,
+        expectedAgentOption: 'approvalsReviewer: "auto_review"',
+      },
+      {
+        templateName: "sequential-reviewer",
+        agent: claudeCodeAgent,
+        expectedAgentOption: 'permissionMode: "auto"',
+      },
+      {
+        templateName: "sequential-reviewer",
+        agent: codexAgent,
+        expectedAgentOption: 'approvalsReviewer: "auto_review"',
+      },
+    ])(
+      "generates a host-ready $templateName workflow for $agent.name",
+      async ({ templateName, agent, expectedAgentOption }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          templateName,
+          agent,
+          model: agent.defaultModel,
+          sandboxProvider: noSandboxProvider,
+        });
+
+        const configDir = join(dir, ".sandcastle");
+        const files = await readdir(configDir);
+        expect(files).not.toContain("main.no-sandbox.mts");
+        expect(files).not.toContain("review-prompt.no-sandbox.md");
+
+        const mainTs = await readFile(join(configDir, "main.mts"), "utf-8");
+        expect(mainTs).toContain(
+          'from "@ai-hero/sandcastle/sandboxes/no-sandbox"',
+        );
+        expect(mainTs).toContain("noSandbox()");
+        expect(mainTs).toContain('branchStrategy: { type: "merge-to-head" }');
+        expect(mainTs).toContain('copyToWorktree: ["node_modules"]');
+        expect(mainTs).toContain(expectedAgentOption);
+        expect(mainTs).not.toContain("onSandboxReady");
+        expect(mainTs).not.toContain("npm install");
+        expect(mainTs).not.toMatch(/Docker|Podman|container/);
+      },
+    );
+
+    it("keeps No-sandbox implementation and review in one host worktree", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        templateName: "sequential-reviewer",
+        sandboxProvider: noSandboxProvider,
+      });
+
+      const configDir = join(dir, ".sandcastle");
+      const mainTs = await readFile(join(configDir, "main.mts"), "utf-8");
+      expect(mainTs).toContain("sandcastle.createWorktree");
+      expect(mainTs).toContain("worktree.createSandbox");
+      expect(mainTs.match(/sandbox\.run\(/g)).toHaveLength(2);
+      expect(mainTs).toContain('sandbox.exec("git rev-parse HEAD")');
+      expect(mainTs).toContain("BASE_COMMIT: baseCommit.stdout.trim()");
+      expect(mainTs).toContain("BRANCH: worktree.branch");
+
+      const reviewPrompt = await readFile(
+        join(configDir, "review-prompt.md"),
+        "utf-8",
+      );
+      expect(reviewPrompt).toContain("git diff {{BASE_COMMIT}}...{{BRANCH}}");
+      expect(reviewPrompt).toContain("git log {{BASE_COMMIT}}..{{BRANCH}}");
+      expect(reviewPrompt).not.toContain("{{TARGET_BRANCH}}");
+    });
+
+    it.each([
+      { provider: dockerProvider, templateName: "simple-loop" },
+      { provider: podmanProvider, templateName: "simple-loop" },
+      { provider: dockerProvider, templateName: "sequential-reviewer" },
+      { provider: podmanProvider, templateName: "sequential-reviewer" },
+    ])(
+      "keeps the $provider.name $templateName container workflow",
+      async ({ provider, templateName }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          templateName,
+          sandboxProvider: provider,
+        });
+
+        const mainTs = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expect(mainTs).toContain(
+          `from "@ai-hero/sandcastle/sandboxes/${provider.name}"`,
+        );
+        expect(mainTs).toContain(`${provider.factoryImport}()`);
+        expect(mainTs).toContain("onSandboxReady");
+        expect(mainTs).toContain("npm install");
+        expect(mainTs).not.toContain("noSandbox");
+      },
+    );
+
     it("gives no-sandbox users host CLI next steps without image instructions", () => {
       const lines = getNextStepsLines(
         "blank",
