@@ -109,6 +109,15 @@ const sandboxOption = Options.text("sandbox").pipe(
   Options.optional,
 );
 
+export const getSandboxProviderSelectConfig = () => ({
+  message: "Select a sandbox provider:",
+  initialValue: "no-sandbox",
+  options: listSandboxProviders().map((provider) => ({
+    value: provider.name,
+    label: provider.label,
+  })),
+});
+
 const issueTrackerOption = Options.text("issue-tracker").pipe(
   Options.withDescription(
     "Issue tracker to use (e.g. github-issues, beads, custom)",
@@ -311,8 +320,8 @@ const initCommand = Command.make(
           ? modelFlag.value
           : selectedAgent.defaultModel;
 
-      // Resolve sandbox provider: CLI flag > interactive select (no default — user must choose)
-      const sandboxProviders = listSandboxProviders();
+      // Resolve sandbox provider: CLI flag > interactive select. No-sandbox is
+      // highlighted first, but clack still waits for the user to submit it.
       let selectedSandboxProvider: SandboxProviderEntry;
       if (sandboxFlag._tag === "Some") {
         selectedSandboxProvider = getSandboxProvider(sandboxFlag.value)!;
@@ -321,13 +330,7 @@ const initCommand = Command.make(
           yield* failIfNonInteractive("--sandbox");
         }
         const selected = yield* Effect.promise(() =>
-          clack.select({
-            message: "Select a sandbox provider:",
-            options: sandboxProviders.map((p) => ({
-              value: p.name,
-              label: p.label,
-            })),
-          }),
+          clack.select(getSandboxProviderSelectConfig()),
         );
         if (clack.isCancel(selected)) {
           yield* Effect.fail(

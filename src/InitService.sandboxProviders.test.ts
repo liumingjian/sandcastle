@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { listSandboxProviders, getSandboxProvider } from "./InitService.js";
 
 describe("Sandbox provider registry", () => {
-  it("listSandboxProviders returns no-sandbox, docker, and podman", () => {
+  it("lists no-sandbox first, followed by the container providers", () => {
     const providers = listSandboxProviders();
-    expect(providers.some((p) => p.name === "no-sandbox")).toBe(true);
-    expect(providers.some((p) => p.name === "docker")).toBe(true);
-    expect(providers.some((p) => p.name === "podman")).toBe(true);
+    expect(providers.map((provider) => provider.name)).toEqual([
+      "no-sandbox",
+      "docker",
+      "podman",
+    ]);
   });
 
   it("getSandboxProvider represents no-sandbox without image capabilities", () => {

@@ -612,6 +612,12 @@ export interface SandboxProviderEntry {
 
 const SANDBOX_PROVIDER_REGISTRY: SandboxProviderEntry[] = [
   {
+    name: "no-sandbox",
+    label: "No sandbox",
+    factoryImport: "noSandbox",
+    supportsImageBuild: false,
+  },
+  {
     name: "docker",
     label: "Docker",
     factoryImport: "docker",
@@ -626,12 +632,6 @@ const SANDBOX_PROVIDER_REGISTRY: SandboxProviderEntry[] = [
     containerfileName: "Containerfile",
     cliNamespace: "podman",
     supportsImageBuild: true,
-  },
-  {
-    name: "no-sandbox",
-    label: "No sandbox",
-    factoryImport: "noSandbox",
-    supportsImageBuild: false,
   },
 ];
 
