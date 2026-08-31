@@ -2481,6 +2481,106 @@ describe("InitService scaffold", () => {
       expect(mainTs.match(/sandbox: podman\(\)/g)).toHaveLength(3);
     });
 
+    it.each(["parallel-planner", "parallel-planner-with-review"])(
+      "generates a branch-isolated no-sandbox workflow for %s",
+      async (templateName) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          sandboxProvider: noSandboxProvider,
+          templateName,
+        });
+
+        const mainTs = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expect(mainTs).toContain(
+          'import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox"',
+        );
+        expect(mainTs).toContain("issues.map");
+        expect(mainTs).toContain("copyToWorktree");
+        expect(mainTs).not.toContain("const hooks");
+        expect(mainTs).not.toContain("hooks,");
+        expect(mainTs).not.toContain("npm install");
+        expect(mainTs).not.toMatch(/container/i);
+        expect(mainTs).not.toContain("sandcastle:sandbox-");
+        expect(mainTs).not.toContain('{ type: "head" }');
+        expect(mainTs).not.toContain('{ type: "merge-to-head" }');
+
+        const plannerCall = mainTs.slice(
+          mainTs.indexOf("const plan = await sandcastle.run"),
+          mainTs.indexOf("const issues = plan.output.issues"),
+        );
+        expect(plannerCall).toContain("sandbox: noSandbox()");
+        expect(plannerCall).not.toContain("branchStrategy");
+
+        const mergerCall = mainTs.slice(
+          mainTs.lastIndexOf("await sandcastle.run({"),
+        );
+        expect(mergerCall).toContain("sandbox: noSandbox()");
+        expect(mergerCall).not.toContain("branchStrategy");
+
+        if (templateName === "parallel-planner") {
+          expect(mainTs).toContain(
+            'branchStrategy: { type: "branch", branch: issue.branch }',
+          );
+          expect(mainTs.match(/sandbox: noSandbox\(\)/g)).toHaveLength(3);
+        } else {
+          expect(mainTs).toContain("sandcastle.createSandbox({");
+          expect(mainTs).toContain("branch: issue.branch");
+          expect(mainTs).toContain("const implement = await sandbox.run");
+          expect(mainTs).toContain("const review = await sandbox.run");
+          expect(mainTs.match(/sandbox: noSandbox\(\)/g)).toHaveLength(3);
+        }
+      },
+    );
+
+    it.each(["parallel-planner", "parallel-planner-with-review"])(
+      "gives %s complete host dependency next steps",
+      (templateName) => {
+        const lines = getNextStepsLines(
+          templateName,
+          "main.mts",
+          getIssueTracker("github-issues")!,
+          claudeCodeAgent,
+          "npm",
+          noSandboxProvider,
+        ).join("\n");
+
+        expect(lines).toContain('copyToWorktree: ["node_modules"]');
+        expect(lines).toContain("npm install zod");
+        expect(lines).not.toMatch(/container|onSandboxReady/i);
+        if (templateName === "parallel-planner-with-review") {
+          expect(lines).toContain("CODING_STANDARDS.md");
+        }
+      },
+    );
+
+    it.each([
+      ["docker", "parallel-planner"],
+      ["podman", "parallel-planner"],
+      ["docker", "parallel-planner-with-review"],
+      ["podman", "parallel-planner-with-review"],
+    ])(
+      "keeps the %s container workflow for %s",
+      async (providerName, templateName) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          sandboxProvider: getSandboxProvider(providerName),
+          templateName,
+        });
+
+        const mainTs = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expect(mainTs).toContain("const hooks");
+        expect(mainTs).toContain("npm install");
+        expect(mainTs).toContain("hooks,");
+        expect(mainTs).not.toContain("sandcastle:sandbox-");
+      },
+    );
+
     it("selecting docker leaves the main file importing and calling docker", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { sandboxProvider: dockerProvider });

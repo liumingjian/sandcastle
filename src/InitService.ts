@@ -17,6 +17,20 @@ worktrees/
 const SETUP_ISSUE_TRACKER_DOC = "SETUP_ISSUE_TRACKER.md";
 const SETUP_ISSUE_TRACKER_PATH = `.sandcastle/${SETUP_ISSUE_TRACKER_DOC}`;
 
+const CONTAINER_PARALLEL_SETUP = `// Hooks run inside the sandbox before the agent starts each iteration.
+// npm install ensures the sandbox always has fresh dependencies.
+const hooks = {
+  sandbox: { onSandboxReady: [{ command: "npm install" }] },
+};
+
+// Copy node_modules from the host into the worktree before each sandbox
+// starts. Avoids a full npm install from scratch; the hook above handles
+// platform-specific binaries and any packages added since the last copy.
+const copyToWorktree = ["node_modules"];`;
+
+const HOST_PARALLEL_SETUP = `// Reuse host dependencies in each implementer's branch worktree.
+const copyToWorktree = ["node_modules"];`;
+
 export interface TemplateMetadata {
   name: string;
   description: string;
@@ -682,9 +696,22 @@ export function getNextStepsLines(
     } else {
       lines.push(
         `${step++}. Add "sandcastle": "npx tsx .sandcastle/${mainFilename}" to your package.json scripts`,
-        `${step++}. Read and customize the prompt files in .sandcastle/ — they shape what the agent does`,
-        `${step++}. Run \`npm run sandcastle\` to start the agent`,
       );
+      if (template.startsWith("parallel-planner")) {
+        lines.push(
+          `${step++}. The template uses \`copyToWorktree: ["node_modules"]\` to reuse host dependencies in each implementer's branch worktree; adjust it if you use a different dependency layout`,
+          `${step++}. Install a schema validator for the planner's \`<plan>\` output — the template uses Zod (\`${addDependencyCommand(packageManager, "zod")}\`), but Valibot, ArkType, or any Standard Schema library works (https://standardschema.dev)`,
+        );
+      }
+      lines.push(
+        `${step++}. Read and customize the prompt files in .sandcastle/ — they shape what the agent does`,
+      );
+      if (template === "parallel-planner-with-review") {
+        lines.push(
+          `${step++}. Customize .sandcastle/CODING_STANDARDS.md with your project's standards — the reviewer agent loads it during review`,
+        );
+      }
+      lines.push(`${step++}. Run \`npm run sandcastle\` to start the agent`);
     }
     return lines;
   }
@@ -858,6 +885,18 @@ const rewriteMainTs = (
         `"@ai-hero/sandcastle/sandboxes/${sandboxProvider.name}"`,
       )
       .replace(/\bdocker\b/g, sandboxProvider.factoryImport);
+
+    content = content
+      .replace(
+        /\/\/ sandcastle:sandbox-setup:start[\s\S]*?\/\/ sandcastle:sandbox-setup:end/,
+        sandboxProvider.supportsImageBuild
+          ? CONTAINER_PARALLEL_SETUP
+          : HOST_PARALLEL_SETUP,
+      )
+      .replace(
+        /\/\* sandcastle:sandbox-hooks \*\/ hooks,/g,
+        sandboxProvider.supportsImageBuild ? "hooks," : "",
+      );
 
     if (!sandboxProvider.supportsImageBuild) {
       const agentOptions =
