@@ -22,6 +22,13 @@ Sandcastle is a TypeScript CLI tool that orchestrates AI coding agents through c
 npm install --save-dev @ai-hero/sandcastle
 ```
 
+To test an unreleased GitHub branch without building a local tarball, install
+that branch directly. npm builds the package before installing it:
+
+```bash
+npm install --save-dev github:liumingjian/sandcastle#codex/issue-1-host-first-init
+```
+
 ### 2. Initialize
 
 Install and authenticate Claude Code or Codex on your host, then initialize the repository:

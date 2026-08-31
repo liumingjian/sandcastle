@@ -31,6 +31,13 @@ Docker, Podman, Vercel, and custom providers remain available when you want a di
 npm install --save-dev @ai-hero/sandcastle
 ```
 
+To test an unreleased GitHub branch without building a local tarball, install
+that branch directly. npm runs the package build before installing it:
+
+```bash
+npm install --save-dev github:liumingjian/sandcastle#codex/issue-1-host-first-init
+```
+
 2. Initialize the project. Choose **No sandbox** (the first, preselected option) and explicitly submit the selection, then choose Claude Code or Codex. The selected CLI must already be installed and authenticated on the host; Sandcastle reuses that login.
 
 ```bash
