@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -99,6 +99,7 @@ describe("sandcastle CLI", () => {
       const { stdout, stderr } = err as { stdout: string; stderr: string };
       const output = stdout + stderr;
       expect(output).toContain("nonexistent");
+      expect(output).toContain("no-sandbox");
       expect(output).toContain("docker");
       expect(output).toContain("podman");
     }
@@ -241,6 +242,48 @@ describe("sandcastle CLI", () => {
     const entries = await readdir(join(hostDir, ".sandcastle"));
     expect(entries).toContain("Dockerfile");
     expect(entries).toContain("prompt.md");
+  });
+
+  it("init --sandbox no-sandbox scaffolds without image flags or artifacts", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "hello.txt", "hello", "initial commit");
+
+    const { stdout } = await runCli(
+      "init --agent codex --template blank --sandbox no-sandbox --issue-tracker beads",
+      hostDir,
+    );
+
+    expect(stdout).toContain("Init complete");
+    expect(stdout).toContain("directly on the host");
+    expect(stdout).not.toMatch(/build-image|build the .* image/i);
+    const entries = await readdir(join(hostDir, ".sandcastle"));
+    expect(entries).not.toContain("Dockerfile");
+    expect(entries).not.toContain("Containerfile");
+    const mainTs = await readFile(
+      join(hostDir, ".sandcastle", "main.mts"),
+      "utf-8",
+    );
+    expect(mainTs).toContain("noSandbox()");
+    expect(mainTs).toContain('approvalsReviewer: "auto_review"');
+  });
+
+  it("init without --sandbox retains the non-interactive required-option error", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "cli-host-"));
+    await initRepo(hostDir);
+
+    try {
+      await runCli(
+        "init --agent claude-code --template blank --issue-tracker beads",
+        hostDir,
+      );
+      expect.fail("Expected command to fail");
+    } catch (err: unknown) {
+      const { stdout, stderr } = err as { stdout: string; stderr: string };
+      const output = stdout + stderr;
+      expect(output).toContain("--sandbox");
+      expect(output).toContain("required in non-interactive mode");
+    }
   });
 
   it("init without --agent fails fast with a clear non-interactive error message", async () => {

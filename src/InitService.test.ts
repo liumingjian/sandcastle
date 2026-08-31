@@ -1,6 +1,12 @@
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  readFile,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -2292,8 +2298,113 @@ describe("InitService scaffold", () => {
   // ---------------------------------------------------------------------------
 
   describe("sandbox provider", () => {
+    const noSandboxProvider = getSandboxProvider("no-sandbox")!;
     const dockerProvider = getSandboxProvider("docker")!;
     const podmanProvider = getSandboxProvider("podman")!;
+
+    it.each([
+      {
+        agent: claudeCodeAgent,
+        option: 'permissionMode: "auto"',
+        agentSecret: "CLAUDE_CODE_OAUTH_TOKEN",
+      },
+      {
+        agent: codexAgent,
+        option: 'approvalsReviewer: "auto_review"',
+        agentSecret: "OPENAI_KEY",
+      },
+    ])(
+      "selecting no-sandbox generates a host-run blank scaffold for $agent.name",
+      async ({ agent, option, agentSecret }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          agent,
+          model: agent.defaultModel,
+          sandboxProvider: noSandboxProvider,
+        });
+
+        const configDir = join(dir, ".sandcastle");
+        const files = await readdir(configDir);
+        expect(files).not.toContain("Dockerfile");
+        expect(files).not.toContain("Containerfile");
+
+        const mainTs = await readFile(join(configDir, "main.mts"), "utf-8");
+        expect(mainTs).toContain(
+          'import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox"',
+        );
+        expect(mainTs).toContain("sandbox: noSandbox()");
+        expect(mainTs).toContain(option);
+
+        const envExample = await readFile(
+          join(configDir, ".env.example"),
+          "utf-8",
+        );
+        expect(envExample).not.toContain(agentSecret);
+        expect(envExample).toContain("GH_TOKEN=");
+      },
+    );
+
+    it("does not invent permission settings for other no-sandbox agents", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        agent: piAgent,
+        model: piAgent.defaultModel,
+        sandboxProvider: noSandboxProvider,
+      });
+
+      const mainTs = await readFile(
+        join(dir, ".sandcastle", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).toContain(`pi("${piAgent.defaultModel}")`);
+      expect(mainTs).not.toContain("permissionMode");
+      expect(mainTs).not.toContain("approvalsReviewer");
+    });
+
+    it("keeps generated Docker agent options unchanged", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { sandboxProvider: dockerProvider });
+
+      const mainTs = await readFile(
+        join(dir, ".sandcastle", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).not.toContain("permissionMode");
+      expect(mainTs).not.toContain("approvalsReviewer");
+    });
+
+    it("gives no-sandbox users host CLI next steps without image instructions", () => {
+      const lines = getNextStepsLines(
+        "blank",
+        "main.mts",
+        getIssueTracker("github-issues")!,
+        claudeCodeAgent,
+        "npm",
+        noSandboxProvider,
+      ).join("\n");
+
+      expect(lines).toContain("Install and authenticate the Claude Code CLI");
+      expect(lines).toContain("on your host");
+      expect(lines).not.toMatch(/build-image|Dockerfile|Containerfile|image/i);
+    });
+
+    it("keeps custom no-sandbox setup free of container artifacts and image steps", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        issueTracker: getIssueTracker("custom"),
+        sandboxProvider: noSandboxProvider,
+      });
+
+      await expect(
+        access(join(dir, ".sandcastle", "Dockerfile")),
+      ).rejects.toThrow();
+      const setup = await readFile(
+        join(dir, ".sandcastle", "SETUP_ISSUE_TRACKER.md"),
+        "utf-8",
+      );
+      expect(setup).not.toMatch(/build-image|Dockerfile|Containerfile|image/i);
+      expect(setup).toContain("directly on the host");
+    });
 
     it("selecting docker writes Dockerfile to .sandcastle/", async () => {
       const dir = await makeDir();
