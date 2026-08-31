@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
+import { InitError } from "./errors.js";
 
 const GITIGNORE = `.env
 logs/
@@ -1194,10 +1195,10 @@ export const scaffold = (
     const scaffoldEffects = [
       fs
         .writeFileString(join(configDir, ".gitignore"), GITIGNORE)
-        .pipe(Effect.mapError((e) => new Error(e.message))),
+        .pipe(Effect.mapError((e) => new InitError({ message: e.message }))),
       fs
         .writeFileString(join(configDir, ".env.example"), envExampleContent)
-        .pipe(Effect.mapError((e) => new Error(e.message))),
+        .pipe(Effect.mapError((e) => new InitError({ message: e.message }))),
       copyTemplateFiles(
         templateDir,
         configDir,
@@ -1212,7 +1213,7 @@ export const scaffold = (
             join(configDir, sandboxProvider.containerfileName),
             agent.dockerfileTemplate,
           )
-          .pipe(Effect.mapError((e) => new Error(e.message))),
+          .pipe(Effect.mapError((e) => new InitError({ message: e.message }))),
       );
     }
     yield* Effect.all(scaffoldEffects, { concurrency: "unbounded" });
