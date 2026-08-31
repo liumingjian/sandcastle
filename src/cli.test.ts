@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { getSandboxProviderSelectConfig } from "./cli.js";
 
 const execAsync = promisify(exec);
 
@@ -30,6 +31,17 @@ const runCli = (args: string, cwd: string) =>
   execAsync(`node ${cliPath} ${args}`, { cwd });
 
 describe("sandcastle CLI", () => {
+  it("presents no-sandbox first and preselects it interactively", () => {
+    const config = getSandboxProviderSelectConfig();
+
+    expect(config.initialValue).toBe("no-sandbox");
+    expect(config.options.map((option) => option.value)).toEqual([
+      "no-sandbox",
+      "docker",
+      "podman",
+    ]);
+  });
+
   it("shows help with --help flag", async () => {
     const { stdout } = await runCli("--help", process.cwd());
     expect(stdout).toContain("sandcastle");

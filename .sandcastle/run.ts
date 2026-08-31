@@ -1,5 +1,5 @@
 import * as sandcastle from "@ai-hero/sandcastle";
-import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 
 const MAX_ITERATIONS = 10;
 const MAX_PARALLEL = 4;
@@ -9,7 +9,8 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
 
   // Phase 1: Plan — orchestrator agent analyzes issues and picks parallelizable work
   const plan = await sandcastle.run({
-    sandbox: docker(),
+    sandbox: noSandbox(),
+    branchStrategy: { type: "head" },
     name: "Planner",
     agent: sandcastle.claudeCode("claude-opus-4-8"),
     promptFile: "./.sandcastle/plan-prompt.md",
@@ -59,14 +60,9 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       await acquire();
       try {
         await using sandbox = await sandcastle.createSandbox({
-          sandbox: docker(),
+          sandbox: noSandbox(),
           branch: issue.branch,
           copyToWorktree: ["node_modules"],
-          hooks: {
-            sandbox: {
-              onSandboxReady: [{ command: "npm install && npm run build" }],
-            },
-          },
         });
 
         const result = await sandbox.run({
@@ -140,7 +136,8 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
 
   // Phase 3: Merge — one agent merges all branches together
   await sandcastle.run({
-    sandbox: docker(),
+    sandbox: noSandbox(),
+    branchStrategy: { type: "head" },
     name: "Merger",
     maxIterations: 10,
     agent: sandcastle.claudeCode("claude-opus-4-8"),

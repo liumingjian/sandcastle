@@ -7,28 +7,12 @@ description: Configure Sandcastle for your project.
 
 The `.sandcastle/` directory in your repository contains all Sandcastle configuration:
 
-- `config.json` -- Main configuration file
-- `Dockerfile` -- Defines the sandbox environment
-- `prompt.md` -- The prompt sent to the agent each iteration
-- `.env` / `.env.example` -- Environment variables for the sandbox
+- `main.ts` or `main.mts` -- The orchestration program
+- Prompt files -- Instructions sent to the agent
+- `.env` / `.env.example` -- Environment variables required by the chosen integrations
+- `Dockerfile` or `Containerfile` -- Generated only for the corresponding container provider
 
-## Config File
-
-The `config.json` file controls how Sandcastle operates:
-
-```json
-{
-  "agent": "claude-code",
-  "maxIterations": 10
-}
-```
-
-### Options
-
-| Option | Description | Default |
-| --- | --- | --- |
-| `agent` | The agent provider to use | `"claude-code"` |
-| `maxIterations` | Maximum iterations per run | `10` |
+The generated TypeScript file selects the agent provider, sandbox provider, branch strategy, and iteration limits through Sandcastle's public API.
 
 ## Prompt
 
