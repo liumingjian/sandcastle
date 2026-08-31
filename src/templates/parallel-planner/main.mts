@@ -1,12 +1,12 @@
 // Parallel Planner — three-phase orchestration loop
 //
 // This template drives a multi-phase workflow:
-//   Phase 1 (Plan):    An opus agent analyzes open issues, builds a dependency
+//   Phase 1 (Plan):    A planning agent analyzes open issues, builds a dependency
 //                      graph, and outputs a <plan> JSON listing unblocked issues
 //                      with their target branch names.
-//   Phase 2 (Execute): N sonnet agents run in parallel via Promise.allSettled,
+//   Phase 2 (Execute): N implementation agents run in parallel via Promise.allSettled,
 //                      each working a single issue on its own branch.
-//   Phase 3 (Merge):   A sonnet agent merges all branches that produced commits.
+//   Phase 3 (Merge):   A merge agent merges all branches that produced commits.
 //
 // The outer loop repeats up to MAX_ITERATIONS times so that newly unblocked
 // issues are picked up after each round of merges.
@@ -61,7 +61,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   // Phase 1: Plan
   //
-  // The planning agent (opus, for deeper reasoning) reads the open issue list,
+  // The planning agent reads the open issue list,
   // builds a dependency graph, and selects the issues that can be worked in
   // parallel right now (i.e., no blocking dependencies on other open issues).
   //
@@ -74,7 +74,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     // One iteration is enough: the planner just needs to read and reason,
     // not write code. (Structured output requires maxIterations: 1.)
     maxIterations: 1,
-    // Opus for planning: dependency analysis benefits from deeper reasoning.
+    // Planning benefits from a model with strong dependency analysis.
     agent: sandcastle.claudeCode("claude-opus-4-8"),
     promptFile: "./.sandcastle/plan-prompt.md",
     // Extract and validate the <plan> JSON into a typed object. Throws
@@ -101,7 +101,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   // Phase 2: Execute
   //
-  // Spawn one sonnet agent per issue, all running concurrently.
+  // Spawn one implementation agent per issue, all running concurrently.
   // Each agent works on its own branch so there are no conflicts during
   // execution — merging happens in Phase 3.
   //
@@ -118,7 +118,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
         name: "implementer",
         // Give each agent plenty of room to implement and iterate on tests.
         maxIterations: 100,
-        // Sonnet for execution: fast and capable enough for typical issue work.
+        // Use the implementation model selected during init.
         agent: sandcastle.claudeCode("claude-sonnet-4-6"),
         promptFile: "./.sandcastle/implement-prompt.md",
         // Prompt arguments substitute {{TASK_ID}}, {{ISSUE_TITLE}},
@@ -178,7 +178,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   // Phase 3: Merge
   //
-  // One sonnet agent merges all completed branches into the current branch,
+  // One merge agent merges all completed branches into the current branch,
   // resolving any conflicts and running tests to confirm everything still works.
   //
   // The {{BRANCHES}} and {{ISSUES}} prompt arguments are lists that the agent
@@ -189,7 +189,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     sandbox: docker(),
     name: "merger",
     maxIterations: 1,
-    // Sonnet is sufficient for merge conflict resolution.
+    // Use the merge model selected during init.
     agent: sandcastle.claudeCode("claude-sonnet-4-6"),
     promptFile: "./.sandcastle/merge-prompt.md",
     promptArgs: {

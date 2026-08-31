@@ -12,9 +12,8 @@ await run({
   // Run the agent directly on the host.
   sandbox: docker(),
 
-  // The agent provider. Pass a model string to claudeCode() — sonnet balances
-  // capability and speed for most tasks. Switch to claude-opus-4-8 for harder
-  // problems, or claude-haiku-4-5-20251001 for speed.
+  // The agent provider and model are selected during init. Change the model
+  // string here if this workflow needs a different capability or speed tradeoff.
   agent: claudeCode("claude-sonnet-4-6"),
 
   // Path to the prompt file. Shell expressions inside are evaluated in the

@@ -1,10 +1,10 @@
 // Sequential Reviewer — implement-then-review loop
 //
 // This template drives a two-phase workflow per issue:
-//   Phase 1 (Implement): A sonnet agent picks an open issue, works on it
+//   Phase 1 (Implement): An implementation agent picks an open issue, works on it
 //                        on a dedicated branch, commits the changes, and signals
 //                        completion.
-//   Phase 2 (Review):    A second sonnet agent reviews the branch diff and either
+//   Phase 2 (Review):    A review agent reviews the branch diff and either
 //                        approves it or makes corrections directly on the branch.
 //
 // Both phases share a single sandbox created via createSandbox(), so the
@@ -66,7 +66,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     // -----------------------------------------------------------------------
     // Phase 1: Implement
     //
-    // A sonnet agent picks the next open issue, writes the
+    // An implementation agent picks the next open issue, writes the
     // implementation (using RGR: Red → Green → Repeat → Refactor), and
     // commits the result.
     //
@@ -96,7 +96,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
     // -----------------------------------------------------------------------
     // Phase 2: Review
     //
-    // A second sonnet agent reviews the diff of the branch produced by
+    // A review agent reviews the diff of the branch produced by
     // Phase 1. It uses the {{BRANCH}} prompt argument to inspect the right
     // branch, and either approves or makes corrections directly on the branch.
     // -----------------------------------------------------------------------

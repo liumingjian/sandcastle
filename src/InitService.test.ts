@@ -2362,6 +2362,31 @@ describe("InitService scaffold", () => {
       expect(mainTs).not.toContain("approvalsReviewer");
     });
 
+    it.each([
+      "blank",
+      "simple-loop",
+      "sequential-reviewer",
+      "parallel-planner",
+      "parallel-planner-with-review",
+    ])(
+      "keeps Codex comments provider-neutral in the %s no-sandbox scaffold",
+      async (templateName) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          agent: codexAgent,
+          model: codexAgent.defaultModel,
+          sandboxProvider: noSandboxProvider,
+          templateName,
+        });
+
+        const mainTs = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expect(mainTs).not.toMatch(/\b(?:sonnet|opus|haiku)\b|claude-/i);
+      },
+    );
+
     it("keeps generated Docker agent options unchanged", async () => {
       const dir = await makeDir();
       await runScaffold(dir, { sandboxProvider: dockerProvider });
