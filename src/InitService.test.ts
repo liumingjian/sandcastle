@@ -2369,7 +2369,7 @@ describe("InitService scaffold", () => {
       "parallel-planner",
       "parallel-planner-with-review",
     ])(
-      "keeps Codex comments provider-neutral in the %s no-sandbox scaffold",
+      "generates compatible Codex options and comments in the %s no-sandbox scaffold",
       async (templateName) => {
         const dir = await makeDir();
         await runScaffold(dir, {
@@ -2384,6 +2384,7 @@ describe("InitService scaffold", () => {
           "utf-8",
         );
         expect(mainTs).not.toMatch(/\b(?:sonnet|opus|haiku)\b|claude-/i);
+        expect(mainTs).toContain('effort: "xhigh"');
       },
     );
 
@@ -2397,6 +2398,7 @@ describe("InitService scaffold", () => {
       );
       expect(mainTs).not.toContain("permissionMode");
       expect(mainTs).not.toContain("approvalsReviewer");
+      expect(mainTs).not.toContain("effort");
     });
 
     it.each([

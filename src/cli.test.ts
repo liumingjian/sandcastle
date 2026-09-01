@@ -266,6 +266,7 @@ describe("sandcastle CLI", () => {
     );
     expect(mainTs).toContain("noSandbox()");
     expect(mainTs).toContain('approvalsReviewer: "auto_review"');
+    expect(mainTs).toContain('effort: "xhigh"');
   });
 
   it("init without --sandbox retains the non-interactive required-option error", async () => {

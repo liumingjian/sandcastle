@@ -919,7 +919,7 @@ const rewriteMainTs = (
         agent.name === "claude-code"
           ? '{ permissionMode: "auto" }'
           : agent.name === "codex"
-            ? '{ approvalsReviewer: "auto_review" }'
+            ? '{ approvalsReviewer: "auto_review", effort: "xhigh" }'
             : undefined;
       if (agentOptions) {
         const generatedFactoryCallRe = new RegExp(
