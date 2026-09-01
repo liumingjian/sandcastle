@@ -787,6 +787,30 @@ describe("codex factory", () => {
     expect(command).toContain("-s danger-full-access");
   });
 
+  it.each([
+    { name: "fresh", session: {} },
+    { name: "resume", session: { resumeSession: "abc-123" } },
+    {
+      name: "fork",
+      session: { resumeSession: "abc-123", forkSession: true },
+    },
+  ])(
+    "places the global approval policy before exec for a $name command",
+    ({ session }) => {
+      const provider = codex("gpt-5.4-mini", {
+        approvalsReviewer: "auto_review",
+      });
+      const { command } = provider.buildPrintCommand({
+        ...opts("test"),
+        ...session,
+      });
+
+      expect(command.indexOf("-a on-request")).toBeLessThan(
+        command.indexOf(" exec"),
+      );
+    },
+  );
+
   it("buildPrintCommand keeps --dangerously-bypass-approvals-and-sandbox when approvalsReviewer is unset", () => {
     const provider = codex("gpt-5.4-mini");
     const { command } = provider.buildPrintCommand(opts("test"));

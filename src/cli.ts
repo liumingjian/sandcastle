@@ -103,7 +103,9 @@ const initModelOption = Options.text("model").pipe(
 );
 
 const sandboxOption = Options.text("sandbox").pipe(
-  Options.withDescription("Sandbox provider to use (e.g. docker, podman)"),
+  Options.withDescription(
+    "Sandbox provider to use (e.g. no-sandbox, docker, podman)",
+  ),
   Options.optional,
 );
 
@@ -309,8 +311,8 @@ const initCommand = Command.make(
           ? modelFlag.value
           : selectedAgent.defaultModel;
 
-      // Resolve sandbox provider: CLI flag > interactive select (no default — user must choose)
-      const sandboxProviders = listSandboxProviders();
+      // Resolve sandbox provider: CLI flag > interactive select. No-sandbox is
+      // highlighted first, but clack still waits for the user to submit it.
       let selectedSandboxProvider: SandboxProviderEntry;
       if (sandboxFlag._tag === "Some") {
         selectedSandboxProvider = getSandboxProvider(sandboxFlag.value)!;
@@ -321,9 +323,10 @@ const initCommand = Command.make(
         const selected = yield* Effect.promise(() =>
           clack.select({
             message: "Select a sandbox provider:",
-            options: sandboxProviders.map((p) => ({
-              value: p.name,
-              label: p.label,
+            initialValue: listSandboxProviders()[0]!.name,
+            options: listSandboxProviders().map((provider) => ({
+              value: provider.name,
+              label: provider.label,
             })),
           }),
         );
@@ -479,7 +482,12 @@ const initCommand = Command.make(
       // (and silently ignore --build-image) and let the next steps point the
       // user at the setup doc.
       const providerLabel = selectedSandboxProvider.label;
-      if (selectedIssueTracker.name === "custom") {
+      if (!selectedSandboxProvider.supportsImageBuild) {
+        yield* d.status(
+          "Init complete! The agent will run directly on the host.",
+          "success",
+        );
+      } else if (selectedIssueTracker.name === "custom") {
         yield* d.status(
           "Init complete! Your custom issue tracker isn't configured yet — see the steps below before building.",
           "success",
@@ -513,7 +521,7 @@ const initCommand = Command.make(
           );
         } else {
           yield* d.status(
-            `Init complete! Run \`sandcastle ${selectedSandboxProvider.cliNamespace} build-image\` to build the ${providerLabel} image later.`,
+            `Init complete! Run \`sandcastle ${selectedSandboxProvider.cliNamespace!} build-image\` to build the ${providerLabel} image later.`,
             "success",
           );
         }
@@ -526,6 +534,7 @@ const initCommand = Command.make(
         selectedIssueTracker,
         selectedAgent,
         packageManager,
+        selectedSandboxProvider,
       );
       for (const [i, line] of nextSteps.entries()) {
         yield* d.text(i === 0 ? line : styleText("dim", line));

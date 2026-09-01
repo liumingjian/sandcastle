@@ -1,7 +1,7 @@
 // Parallel Planner with Review — four-phase orchestration loop
 //
 // This template drives a multi-phase workflow:
-//   Phase 1 (Plan):             An opus agent analyzes open issues, builds a
+//   Phase 1 (Plan):             A planning agent analyzes open issues, builds a
 //                               dependency graph, and outputs a <plan> JSON
 //                               listing unblocked issues with branch names.
 //   Phase 2 (Execute + Review): For each issue, a sandbox is created via
@@ -43,6 +43,7 @@ const planSchema = z.object({
 // Raise this if your backlog is large; lower it for a quick smoke-test run.
 const MAX_ITERATIONS = 10;
 
+// sandcastle:sandbox-setup:start
 // Hooks run inside the sandbox before the agent starts each iteration.
 // npm install ensures the sandbox always has fresh dependencies.
 const hooks = {
@@ -53,6 +54,7 @@ const hooks = {
 // starts. Avoids a full npm install from scratch; the hook above handles
 // platform-specific binaries and any packages added since the last copy.
 const copyToWorktree = ["node_modules"];
+// sandcastle:sandbox-setup:end
 
 // ---------------------------------------------------------------------------
 // Main loop
@@ -64,20 +66,20 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // -------------------------------------------------------------------------
   // Phase 1: Plan
   //
-  // The planning agent (opus, for deeper reasoning) reads the open issue list,
+  // The planning agent reads the open issue list,
   // builds a dependency graph, and selects the issues that can be worked in
   // parallel right now (i.e., no blocking dependencies on other open issues).
   //
   // It outputs a <plan> JSON block — Output.object parses and validates it.
   // -------------------------------------------------------------------------
   const plan = await sandcastle.run({
-    hooks,
+    /* sandcastle:sandbox-hooks */ hooks,
     sandbox: docker(),
     name: "planner",
     // One iteration is enough: the planner just needs to read and reason,
     // not write code. (Structured output requires maxIterations: 1.)
     maxIterations: 1,
-    // Opus for planning: dependency analysis benefits from deeper reasoning.
+    // Planning benefits from a model with strong dependency analysis.
     agent: sandcastle.claudeCode("claude-opus-4-8"),
     promptFile: "./.sandcastle/plan-prompt.md",
     // Extract and validate the <plan> JSON into a typed object. Throws
@@ -116,7 +118,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
       const sandbox = await sandcastle.createSandbox({
         branch: issue.branch,
         sandbox: docker(),
-        hooks,
+        /* sandcastle:sandbox-hooks */ hooks,
         copyToWorktree,
       });
 
@@ -206,7 +208,7 @@ for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
   // uses to know which branches to merge and which issues to close.
   // -------------------------------------------------------------------------
   await sandcastle.run({
-    hooks,
+    /* sandcastle:sandbox-hooks */ hooks,
     sandbox: docker(),
     name: "merger",
     maxIterations: 1,

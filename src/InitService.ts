@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SANDBOX_REPO_DIR } from "./SandboxFactory.js";
+import { InitError } from "./errors.js";
 
 const GITIGNORE = `.env
 logs/
@@ -16,6 +17,20 @@ worktrees/
  */
 const SETUP_ISSUE_TRACKER_DOC = "SETUP_ISSUE_TRACKER.md";
 const SETUP_ISSUE_TRACKER_PATH = `.sandcastle/${SETUP_ISSUE_TRACKER_DOC}`;
+
+const CONTAINER_PARALLEL_SETUP = `// Hooks run inside the sandbox before the agent starts each iteration.
+// npm install ensures the sandbox always has fresh dependencies.
+const hooks = {
+  sandbox: { onSandboxReady: [{ command: "npm install" }] },
+};
+
+// Copy node_modules from the host into the worktree before each sandbox
+// starts. Avoids a full npm install from scratch; the hook above handles
+// platform-specific binaries and any packages added since the last copy.
+const copyToWorktree = ["node_modules"];`;
+
+const HOST_PARALLEL_SETUP = `// Reuse host dependencies in each implementer's branch worktree.
+const copyToWorktree = ["node_modules"];`;
 
 export interface TemplateMetadata {
   name: string;
@@ -586,24 +601,38 @@ export const getAgent = (name: string): AgentEntry | undefined =>
 export interface SandboxProviderEntry {
   readonly name: string;
   readonly label: string;
+  /** Factory exported by the provider's package subpath. */
+  readonly factoryImport: string;
   /** Filename written to .sandcastle/ (e.g. "Dockerfile" or "Containerfile") */
-  readonly containerfileName: string;
+  readonly containerfileName?: string;
   /** CLI namespace for build/remove commands (e.g. "docker" or "podman") */
-  readonly cliNamespace: string;
+  readonly cliNamespace?: string;
+  /** Whether init can build an image for this provider. */
+  readonly supportsImageBuild: boolean;
 }
 
 const SANDBOX_PROVIDER_REGISTRY: SandboxProviderEntry[] = [
   {
+    name: "no-sandbox",
+    label: "No sandbox",
+    factoryImport: "noSandbox",
+    supportsImageBuild: false,
+  },
+  {
     name: "docker",
     label: "Docker",
+    factoryImport: "docker",
     containerfileName: "Dockerfile",
     cliNamespace: "docker",
+    supportsImageBuild: true,
   },
   {
     name: "podman",
     label: "Podman",
+    factoryImport: "podman",
     containerfileName: "Containerfile",
     cliNamespace: "podman",
+    supportsImageBuild: true,
   },
 ];
 
@@ -625,12 +654,23 @@ export function getNextStepsLines(
   issueTracker: IssueTrackerEntry,
   agent: AgentEntry,
   packageManager: PackageManager,
+  sandboxProvider: SandboxProviderEntry = getSandboxProvider("docker")!,
 ): string[] {
   // The custom issue tracker scaffolds a broken-until-configured project, so
   // its next steps are about running the setup prompt — not the template's
   // normal "set env vars and go" flow. This branch wins over template-specific
   // steps regardless of the chosen template.
   if (issueTracker.name === "custom") {
+    if (!sandboxProvider.supportsImageBuild) {
+      return [
+        "Next steps:",
+        `1. Install and authenticate the ${agent.label} CLI on your host. Sandcastle will reuse that login.`,
+        "2. Your custom issue tracker isn't wired up yet — runs hard-fail until you configure it.",
+        `3. Feed the setup prompt to ${agent.label} on your host to finish wiring it up:`,
+        `   ${agent.setupCommand}`,
+        `4. Follow .sandcastle/${SETUP_ISSUE_TRACKER_DOC} to edit the scaffolded files in place and verify.`,
+      ];
+    }
     return [
       "Next steps:",
       "1. Your custom issue tracker isn't wired up yet — runs hard-fail until you configure it.",
@@ -639,6 +679,42 @@ export function getNextStepsLines(
       `   (Runs on the host — you need the ${agent.label} CLI installed locally, since the sandbox image isn't built yet.)`,
       `3. Follow .sandcastle/${SETUP_ISSUE_TRACKER_DOC} to edit the scaffolded files in place, build the image, and verify.`,
     ];
+  }
+  if (!sandboxProvider.supportsImageBuild) {
+    let step = 1;
+    const lines = [
+      "Next steps:",
+      `${step++}. Install and authenticate the ${agent.label} CLI on your host. Sandcastle will reuse that login.`,
+      `${step++}. Set any required issue tracker env vars in .sandcastle/.env (see .sandcastle/.env.example)`,
+    ];
+    if (template === "blank") {
+      lines.push(
+        `${step++}. Read and customize .sandcastle/prompt.md to describe what you want the agent to do`,
+        `${step++}. Customize .sandcastle/${mainFilename} — it uses the JS API (\`run()\`) to control how the agent runs`,
+        `${step++}. Add "sandcastle": "npx tsx .sandcastle/${mainFilename}" to your package.json scripts`,
+        `${step++}. Run \`npm run sandcastle\` to start the agent`,
+      );
+    } else {
+      lines.push(
+        `${step++}. Add "sandcastle": "npx tsx .sandcastle/${mainFilename}" to your package.json scripts`,
+      );
+      if (template.startsWith("parallel-planner")) {
+        lines.push(
+          `${step++}. The template uses \`copyToWorktree: ["node_modules"]\` to reuse host dependencies in each implementer's branch worktree; adjust it if you use a different dependency layout`,
+          `${step++}. Install a schema validator for the planner's \`<plan>\` output — the template uses Zod (\`${addDependencyCommand(packageManager, "zod")}\`), but Valibot, ArkType, or any Standard Schema library works (https://standardschema.dev)`,
+        );
+      }
+      lines.push(
+        `${step++}. Read and customize the prompt files in .sandcastle/ — they shape what the agent does`,
+      );
+      if (template === "parallel-planner-with-review") {
+        lines.push(
+          `${step++}. Customize .sandcastle/CODING_STANDARDS.md with your project's standards — the reviewer agent loads it during review`,
+        );
+      }
+      lines.push(`${step++}. Run \`npm run sandcastle\` to start the agent`);
+    }
+    return lines;
   }
   if (template === "blank") {
     const lines = [
@@ -730,24 +806,39 @@ const copyTemplateFiles = (
   templateDir: string,
   destDir: string,
   mainFilename: string,
+  sandboxProviderName: string,
 ): Effect.Effect<void, Error, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const files = yield* fs
       .readDirectory(templateDir)
       .pipe(Effect.mapError((e) => new Error(e.message)));
+    const providerVariant = (filename: string): string => {
+      const extensionIndex = filename.lastIndexOf(".");
+      if (extensionIndex === -1) return filename;
+      return `${filename.slice(0, extensionIndex)}.${sandboxProviderName}${filename.slice(extensionIndex)}`;
+    };
+    const isProviderVariant = (filename: string): boolean =>
+      SANDBOX_PROVIDER_REGISTRY.some((provider) =>
+        filename.includes(`.${provider.name}.`),
+      );
+    const sourceFiles = new Set(files);
+
     yield* Effect.all(
       files
         .filter(
           (f) =>
             f !== "template.json" &&
             f !== ".env.example" &&
+            !isProviderVariant(f) &&
             !COMPILED_FILE_EXTENSIONS.some((ext) => f.endsWith(ext)),
         )
-        .map((f) => {
-          const destName = f === "main.mts" ? mainFilename : f;
+        .map((destFile) => {
+          const variant = providerVariant(destFile);
+          const sourceFile = sourceFiles.has(variant) ? variant : destFile;
+          const destName = destFile === "main.mts" ? mainFilename : destFile;
           return fs
-            .copyFile(join(templateDir, f), join(destDir, destName))
+            .copyFile(join(templateDir, sourceFile), join(destDir, destName))
             .pipe(Effect.mapError((e) => new Error(e.message)));
         }),
       { concurrency: "unbounded" },
@@ -802,12 +893,45 @@ const rewriteMainTs = (
     );
 
     // Replace the sandbox provider. Templates always use `docker` as the
-    // placeholder, where the registry name doubles as both the factory function
-    // name and the `/sandboxes/<name>` import subpath segment. A single
-    // case-sensitive word-boundary replace therefore rewrites the named import,
-    // the import subpath, and every factory call site — and is a no-op when
-    // docker is selected.
-    content = content.replace(/\bdocker\b/g, sandboxProvider.name);
+    // placeholder. The import subpath uses the provider name while calls use
+    // its exported factory name (notably `no-sandbox` / `noSandbox`).
+    content = content
+      .replace(
+        '"@ai-hero/sandcastle/sandboxes/docker"',
+        `"@ai-hero/sandcastle/sandboxes/${sandboxProvider.name}"`,
+      )
+      .replace(/\bdocker\b/g, sandboxProvider.factoryImport);
+
+    content = content
+      .replace(
+        /\/\/ sandcastle:sandbox-setup:start[\s\S]*?\/\/ sandcastle:sandbox-setup:end/,
+        sandboxProvider.supportsImageBuild
+          ? CONTAINER_PARALLEL_SETUP
+          : HOST_PARALLEL_SETUP,
+      )
+      .replace(
+        /\/\* sandcastle:sandbox-hooks \*\/ hooks,/g,
+        sandboxProvider.supportsImageBuild ? "hooks," : "",
+      );
+
+    if (!sandboxProvider.supportsImageBuild) {
+      const agentOptions =
+        agent.name === "claude-code"
+          ? '{ permissionMode: "auto" }'
+          : agent.name === "codex"
+            ? '{ approvalsReviewer: "auto_review", effort: "xhigh" }'
+            : undefined;
+      if (agentOptions) {
+        const generatedFactoryCallRe = new RegExp(
+          `${agent.factoryImport}\\(("[^"]+")\\)`,
+          "g",
+        );
+        content = content.replace(
+          generatedFactoryCallRe,
+          `${agent.factoryImport}($1, ${agentOptions})`,
+        );
+      }
+    }
 
     yield* fs
       .writeFileString(mainTsPath, content)
@@ -912,10 +1036,10 @@ const substituteTemplateArgs = (
 /**
  * Build the `SETUP_ISSUE_TRACKER.md` prompt scaffolded for the `custom` issue
  * tracker. It addresses the user's coding agent and walks it through wiring up
- * the tracker by editing the scaffolded files in place. The build command is
- * provider-parameterized so it names the actual CLI namespace (docker/podman).
+ * the tracker by editing the scaffolded files in place. Container providers
+ * include their image setup, while No-sandbox keeps all setup on the host.
  */
-const buildSetupIssueTrackerDoc = (cliNamespace: string): string =>
+const buildSetupIssueTrackerDoc = (cliNamespace?: string): string =>
   `# Set up your custom issue tracker
 
 You are a coding agent. Finish wiring up the **custom issue tracker** for this Sandcastle project. It was scaffolded in a deliberately broken-until-configured state: until you complete the steps below, every Sandcastle run hard-fails with a pointer back to this file.
@@ -929,7 +1053,7 @@ Wire up the issue tracker so the scaffolded prompts can **list**, **view**, and 
 Ask the user:
 
 - Which issue tracker do they use (e.g. Jira, Linear, a GitHub repo other than this one, an internal API)?
-- How should the sandbox authenticate — a CLI that is already logged in, or an API token? If a token, what is the environment variable name?
+- How should the agent authenticate — a CLI that is already logged in, or an API token? If a token, what is the environment variable name?
 
 ## 2. Produce three commands
 
@@ -941,13 +1065,17 @@ Work out, together with the user, the shell commands for:
 
 ## 3. Edit the scaffolded files in place
 
-- **Dockerfile / Containerfile** — replace the line
+${
+  cliNamespace
+    ? `- **Dockerfile / Containerfile** — replace the line
 
   \`\`\`
   ${CUSTOM_TRACKER_TOOLS}
   \`\`\`
 
-  with the install steps for your tracker's CLI (if it needs one).
+  with the install steps for your tracker's CLI (if it needs one).`
+    : `- Install your tracker's CLI on the host if it needs one. The generated workflow runs commands directly on the host.`
+}
 
 - **Prompt files (\`.sandcastle/*.md\`)** — replace the sentinel
 
@@ -959,7 +1087,9 @@ Work out, together with the user, the shell commands for:
 
 - **\`.env.example\`** — replace the \`# TODO\` block with the real env var(s) your tracker needs, then tell the user to set them in \`.sandcastle/.env\`.
 
-## 4. Build the image
+${
+  cliNamespace
+    ? `## 4. Build the image
 
 Once the files are wired up, build the sandbox image:
 
@@ -969,7 +1099,11 @@ sandcastle ${cliNamespace} build-image
 
 ## 5. Verify
 
-Run your **list** command inside the built image and confirm it returns the open tasks as JSON. If it errors, fix the command or the auth and rebuild.
+Run your **list** command inside the built image and confirm it returns the open tasks as JSON. If it errors, fix the command or the auth and rebuild.`
+    : `## 4. Verify
+
+Run your **list** command on the host and confirm it returns the open tasks as JSON. If it errors, fix the command or authentication.`
+}
 `;
 
 // ---------------------------------------------------------------------------
@@ -1025,7 +1159,7 @@ export const scaffold = (
       templateName = "blank",
       createLabel = true,
       issueTracker = ISSUE_TRACKER_REGISTRY[0]!, // default: github-issues
-      sandboxProvider = SANDBOX_PROVIDER_REGISTRY[0]!, // default: docker
+      sandboxProvider = getSandboxProvider("docker")!,
     } = options;
     const fs = yield* FileSystem.FileSystem;
     const configDir = join(repoDir, ".sandcastle");
@@ -1050,30 +1184,39 @@ export const scaffold = (
     const templateDir = yield* getTemplateDir(templateName);
 
     // Build .env.example from agent + issue tracker env blocks
-    const envExampleParts = [agent.envExample];
+    const envExampleParts = sandboxProvider.supportsImageBuild
+      ? [agent.envExample]
+      : [];
     if (issueTracker.envExample) {
       envExampleParts.push(issueTracker.envExample);
     }
     const envExampleContent = envExampleParts.join("\n") + "\n";
 
-    yield* Effect.all(
-      [
+    const scaffoldEffects = [
+      fs
+        .writeFileString(join(configDir, ".gitignore"), GITIGNORE)
+        .pipe(Effect.mapError((e) => new InitError({ message: e.message }))),
+      fs
+        .writeFileString(join(configDir, ".env.example"), envExampleContent)
+        .pipe(Effect.mapError((e) => new InitError({ message: e.message }))),
+      copyTemplateFiles(
+        templateDir,
+        configDir,
+        mainFilename,
+        sandboxProvider.name,
+      ),
+    ];
+    if (sandboxProvider.containerfileName) {
+      scaffoldEffects.push(
         fs
           .writeFileString(
             join(configDir, sandboxProvider.containerfileName),
             agent.dockerfileTemplate,
           )
-          .pipe(Effect.mapError((e) => new Error(e.message))),
-        fs
-          .writeFileString(join(configDir, ".gitignore"), GITIGNORE)
-          .pipe(Effect.mapError((e) => new Error(e.message))),
-        fs
-          .writeFileString(join(configDir, ".env.example"), envExampleContent)
-          .pipe(Effect.mapError((e) => new Error(e.message))),
-        copyTemplateFiles(templateDir, configDir, mainFilename),
-      ],
-      { concurrency: "unbounded" },
-    );
+          .pipe(Effect.mapError((e) => new InitError({ message: e.message }))),
+      );
+    }
+    yield* Effect.all(scaffoldEffects, { concurrency: "unbounded" });
 
     // Rewrite main file with the selected agent factory, model, and sandbox provider
     yield* rewriteMainTs(

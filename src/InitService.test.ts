@@ -1,6 +1,12 @@
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  readFile,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -2292,8 +2298,273 @@ describe("InitService scaffold", () => {
   // ---------------------------------------------------------------------------
 
   describe("sandbox provider", () => {
+    const noSandboxProvider = getSandboxProvider("no-sandbox")!;
     const dockerProvider = getSandboxProvider("docker")!;
     const podmanProvider = getSandboxProvider("podman")!;
+
+    it.each([
+      {
+        agent: claudeCodeAgent,
+        option: 'permissionMode: "auto"',
+        agentSecret: "CLAUDE_CODE_OAUTH_TOKEN",
+      },
+      {
+        agent: codexAgent,
+        option: 'approvalsReviewer: "auto_review"',
+        agentSecret: "OPENAI_KEY",
+      },
+    ])(
+      "selecting no-sandbox generates a host-run blank scaffold for $agent.name",
+      async ({ agent, option, agentSecret }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          agent,
+          model: agent.defaultModel,
+          sandboxProvider: noSandboxProvider,
+        });
+
+        const configDir = join(dir, ".sandcastle");
+        const files = await readdir(configDir);
+        expect(files).not.toContain("Dockerfile");
+        expect(files).not.toContain("Containerfile");
+
+        const mainTs = await readFile(join(configDir, "main.mts"), "utf-8");
+        expect(mainTs).toContain(
+          'import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox"',
+        );
+        expect(mainTs).toContain("sandbox: noSandbox()");
+        expect(mainTs).toContain('branchStrategy: { type: "merge-to-head" }');
+        expect(mainTs).toContain(option);
+
+        const envExample = await readFile(
+          join(configDir, ".env.example"),
+          "utf-8",
+        );
+        expect(envExample).not.toContain(agentSecret);
+        expect(envExample).toContain("GH_TOKEN=");
+      },
+    );
+
+    it("does not invent permission settings for other no-sandbox agents", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        agent: piAgent,
+        model: piAgent.defaultModel,
+        sandboxProvider: noSandboxProvider,
+      });
+
+      const mainTs = await readFile(
+        join(dir, ".sandcastle", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).toContain(`pi("${piAgent.defaultModel}")`);
+      expect(mainTs).not.toContain("permissionMode");
+      expect(mainTs).not.toContain("approvalsReviewer");
+    });
+
+    it.each([
+      "blank",
+      "simple-loop",
+      "sequential-reviewer",
+      "parallel-planner",
+      "parallel-planner-with-review",
+    ])(
+      "generates compatible Codex options and comments in the %s no-sandbox scaffold",
+      async (templateName) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          agent: codexAgent,
+          model: codexAgent.defaultModel,
+          sandboxProvider: noSandboxProvider,
+          templateName,
+        });
+
+        const mainTs = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expect(mainTs).not.toMatch(/\b(?:sonnet|opus|haiku)\b|claude-/i);
+        expect(mainTs).toContain('effort: "xhigh"');
+      },
+    );
+
+    it("keeps generated Docker agent options unchanged", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, { sandboxProvider: dockerProvider });
+
+      const mainTs = await readFile(
+        join(dir, ".sandcastle", "main.mts"),
+        "utf-8",
+      );
+      expect(mainTs).not.toContain("permissionMode");
+      expect(mainTs).not.toContain("approvalsReviewer");
+      expect(mainTs).not.toContain("effort");
+    });
+
+    it.each([
+      {
+        provider: dockerProvider,
+        factory: "docker",
+        containerfile: "Dockerfile",
+      },
+      {
+        provider: podmanProvider,
+        factory: "podman",
+        containerfile: "Containerfile",
+      },
+    ])(
+      "keeps the $factory blank scaffold container workflow unchanged",
+      async ({ provider, factory, containerfile }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, { sandboxProvider: provider });
+
+        const configDir = join(dir, ".sandcastle");
+        const files = await readdir(configDir);
+        const mainTs = await readFile(join(configDir, "main.mts"), "utf-8");
+
+        expect(files).toContain(containerfile);
+        expect(mainTs).toContain(`sandbox: ${factory}()`);
+        expect(mainTs).not.toContain("branchStrategy");
+        expect(mainTs).not.toContain("permissionMode");
+      },
+    );
+
+    it.each([
+      {
+        templateName: "simple-loop",
+        agent: claudeCodeAgent,
+        expectedAgentOption: 'permissionMode: "auto"',
+      },
+      {
+        templateName: "simple-loop",
+        agent: codexAgent,
+        expectedAgentOption: 'approvalsReviewer: "auto_review"',
+      },
+      {
+        templateName: "sequential-reviewer",
+        agent: claudeCodeAgent,
+        expectedAgentOption: 'permissionMode: "auto"',
+      },
+      {
+        templateName: "sequential-reviewer",
+        agent: codexAgent,
+        expectedAgentOption: 'approvalsReviewer: "auto_review"',
+      },
+    ])(
+      "generates a host-ready $templateName workflow for $agent.name",
+      async ({ templateName, agent, expectedAgentOption }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          templateName,
+          agent,
+          model: agent.defaultModel,
+          sandboxProvider: noSandboxProvider,
+        });
+
+        const configDir = join(dir, ".sandcastle");
+        const files = await readdir(configDir);
+        expect(files).not.toContain("main.no-sandbox.mts");
+        expect(files).not.toContain("review-prompt.no-sandbox.md");
+
+        const mainTs = await readFile(join(configDir, "main.mts"), "utf-8");
+        expect(mainTs).toContain(
+          'from "@ai-hero/sandcastle/sandboxes/no-sandbox"',
+        );
+        expect(mainTs).toContain("noSandbox()");
+        expect(mainTs).toContain('branchStrategy: { type: "merge-to-head" }');
+        expect(mainTs).toContain('copyToWorktree: ["node_modules"]');
+        expect(mainTs).toContain(expectedAgentOption);
+        expect(mainTs).not.toContain("onSandboxReady");
+        expect(mainTs).not.toContain("npm install");
+        expect(mainTs).not.toMatch(/Docker|Podman|container/);
+      },
+    );
+
+    it("keeps No-sandbox implementation and review in one host worktree", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        templateName: "sequential-reviewer",
+        sandboxProvider: noSandboxProvider,
+      });
+
+      const configDir = join(dir, ".sandcastle");
+      const mainTs = await readFile(join(configDir, "main.mts"), "utf-8");
+      expect(mainTs).toContain("sandcastle.createWorktree");
+      expect(mainTs).toContain("worktree.createSandbox");
+      expect(mainTs.match(/sandbox\.run\(/g)).toHaveLength(2);
+      expect(mainTs).toContain('sandbox.exec("git rev-parse HEAD")');
+      expect(mainTs).toContain("BASE_COMMIT: baseCommit.stdout.trim()");
+      expect(mainTs).toContain("BRANCH: worktree.branch");
+
+      const reviewPrompt = await readFile(
+        join(configDir, "review-prompt.md"),
+        "utf-8",
+      );
+      expect(reviewPrompt).toContain("git diff {{BASE_COMMIT}}...{{BRANCH}}");
+      expect(reviewPrompt).toContain("git log {{BASE_COMMIT}}..{{BRANCH}}");
+      expect(reviewPrompt).not.toContain("{{TARGET_BRANCH}}");
+    });
+
+    it.each([
+      { provider: dockerProvider, templateName: "simple-loop" },
+      { provider: podmanProvider, templateName: "simple-loop" },
+      { provider: dockerProvider, templateName: "sequential-reviewer" },
+      { provider: podmanProvider, templateName: "sequential-reviewer" },
+    ])(
+      "keeps the $provider.name $templateName container workflow",
+      async ({ provider, templateName }) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          templateName,
+          sandboxProvider: provider,
+        });
+
+        const mainTs = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expect(mainTs).toContain(
+          `from "@ai-hero/sandcastle/sandboxes/${provider.name}"`,
+        );
+        expect(mainTs).toContain(`${provider.factoryImport}()`);
+        expect(mainTs).toContain("onSandboxReady");
+        expect(mainTs).toContain("npm install");
+        expect(mainTs).not.toContain("noSandbox");
+      },
+    );
+
+    it("gives no-sandbox users host CLI next steps without image instructions", () => {
+      const lines = getNextStepsLines(
+        "blank",
+        "main.mts",
+        getIssueTracker("github-issues")!,
+        claudeCodeAgent,
+        "npm",
+        noSandboxProvider,
+      ).join("\n");
+
+      expect(lines).toContain("Install and authenticate the Claude Code CLI");
+      expect(lines).toContain("on your host");
+      expect(lines).not.toMatch(/build-image|Dockerfile|Containerfile|image/i);
+    });
+
+    it("keeps custom no-sandbox setup free of container artifacts and image steps", async () => {
+      const dir = await makeDir();
+      await runScaffold(dir, {
+        issueTracker: getIssueTracker("custom"),
+        sandboxProvider: noSandboxProvider,
+      });
+
+      await expect(
+        access(join(dir, ".sandcastle", "Dockerfile")),
+      ).rejects.toThrow();
+      const setup = await readFile(
+        join(dir, ".sandcastle", "SETUP_ISSUE_TRACKER.md"),
+        "utf-8",
+      );
+      expect(setup).not.toMatch(/build-image|Dockerfile|Containerfile|image/i);
+      expect(setup).toContain("directly on the host");
+    });
 
     it("selecting docker writes Dockerfile to .sandcastle/", async () => {
       const dir = await makeDir();
@@ -2369,6 +2640,106 @@ describe("InitService scaffold", () => {
       // parallel-planner calls the factory three times
       expect(mainTs.match(/sandbox: podman\(\)/g)).toHaveLength(3);
     });
+
+    it.each(["parallel-planner", "parallel-planner-with-review"])(
+      "generates a branch-isolated no-sandbox workflow for %s",
+      async (templateName) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          sandboxProvider: noSandboxProvider,
+          templateName,
+        });
+
+        const mainTs = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expect(mainTs).toContain(
+          'import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox"',
+        );
+        expect(mainTs).toContain("issues.map");
+        expect(mainTs).toContain("copyToWorktree");
+        expect(mainTs).not.toContain("const hooks");
+        expect(mainTs).not.toContain("hooks,");
+        expect(mainTs).not.toContain("npm install");
+        expect(mainTs).not.toMatch(/container/i);
+        expect(mainTs).not.toContain("sandcastle:sandbox-");
+        expect(mainTs).not.toContain('{ type: "head" }');
+        expect(mainTs).not.toContain('{ type: "merge-to-head" }');
+
+        const plannerCall = mainTs.slice(
+          mainTs.indexOf("const plan = await sandcastle.run"),
+          mainTs.indexOf("const issues = plan.output.issues"),
+        );
+        expect(plannerCall).toContain("sandbox: noSandbox()");
+        expect(plannerCall).not.toContain("branchStrategy");
+
+        const mergerCall = mainTs.slice(
+          mainTs.lastIndexOf("await sandcastle.run({"),
+        );
+        expect(mergerCall).toContain("sandbox: noSandbox()");
+        expect(mergerCall).not.toContain("branchStrategy");
+
+        if (templateName === "parallel-planner") {
+          expect(mainTs).toContain(
+            'branchStrategy: { type: "branch", branch: issue.branch }',
+          );
+          expect(mainTs.match(/sandbox: noSandbox\(\)/g)).toHaveLength(3);
+        } else {
+          expect(mainTs).toContain("sandcastle.createSandbox({");
+          expect(mainTs).toContain("branch: issue.branch");
+          expect(mainTs).toContain("const implement = await sandbox.run");
+          expect(mainTs).toContain("const review = await sandbox.run");
+          expect(mainTs.match(/sandbox: noSandbox\(\)/g)).toHaveLength(3);
+        }
+      },
+    );
+
+    it.each(["parallel-planner", "parallel-planner-with-review"])(
+      "gives %s complete host dependency next steps",
+      (templateName) => {
+        const lines = getNextStepsLines(
+          templateName,
+          "main.mts",
+          getIssueTracker("github-issues")!,
+          claudeCodeAgent,
+          "npm",
+          noSandboxProvider,
+        ).join("\n");
+
+        expect(lines).toContain('copyToWorktree: ["node_modules"]');
+        expect(lines).toContain("npm install zod");
+        expect(lines).not.toMatch(/container|onSandboxReady/i);
+        if (templateName === "parallel-planner-with-review") {
+          expect(lines).toContain("CODING_STANDARDS.md");
+        }
+      },
+    );
+
+    it.each([
+      ["docker", "parallel-planner"],
+      ["podman", "parallel-planner"],
+      ["docker", "parallel-planner-with-review"],
+      ["podman", "parallel-planner-with-review"],
+    ])(
+      "keeps the %s container workflow for %s",
+      async (providerName, templateName) => {
+        const dir = await makeDir();
+        await runScaffold(dir, {
+          sandboxProvider: getSandboxProvider(providerName),
+          templateName,
+        });
+
+        const mainTs = await readFile(
+          join(dir, ".sandcastle", "main.mts"),
+          "utf-8",
+        );
+        expect(mainTs).toContain("const hooks");
+        expect(mainTs).toContain("npm install");
+        expect(mainTs).toContain("hooks,");
+        expect(mainTs).not.toContain("sandcastle:sandbox-");
+      },
+    );
 
     it("selecting docker leaves the main file importing and calling docker", async () => {
       const dir = await makeDir();

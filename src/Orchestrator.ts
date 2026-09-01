@@ -189,11 +189,14 @@ const invokeAgent = (
       });
 
       if (execResult.exitCode !== 0) {
-        // Prefer stderr; fall back to resultText (from parsed stream events),
-        // then to the tail of raw stdout (last 20 non-empty lines).
+        // Preserve stderr and append any structured result parsed from stdout.
+        // Some agents write only a generic setup notice to stderr while the
+        // actionable API error is emitted as a structured stdout event.
         let errorDetail = execResult.stderr;
-        if (!errorDetail.trim()) {
-          errorDetail = resultText;
+        if (resultText.trim()) {
+          errorDetail = errorDetail.trim()
+            ? `${errorDetail.trim()}\n${resultText}`
+            : resultText;
         }
         if (!errorDetail.trim()) {
           const lines = execResult.stdout.split("\n").filter((l) => l.trim());

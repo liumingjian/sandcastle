@@ -1,15 +1,15 @@
 ---
 title: Getting Started
-description: Learn how to use Sandcastle to orchestrate AI coding agents in isolated sandbox environments.
+description: Learn how to use Sandcastle to orchestrate AI coding agents on the host or through isolated sandbox environments.
 ---
 
 ## What is Sandcastle?
 
-Sandcastle is a TypeScript CLI tool that orchestrates AI coding agents inside isolated sandbox environments. It manages the full lifecycle of running an agent against your codebase: syncing code into a sandbox, invoking the agent, and syncing changes back.
+Sandcastle is a TypeScript CLI tool that orchestrates AI coding agents through configurable sandbox providers. It manages the lifecycle of branches, prompts, agent runs, and sandbox environments.
 
 ## Key Concepts
 
-- **Sandbox** -- An isolated environment (Docker container or local directory) where an agent executes code
+- **Sandbox** -- The environment where an agent executes code
 - **Host** -- Your machine where Sandcastle runs and the real git repo lives
 - **Agent** -- The AI coding tool invoked inside the sandbox (e.g. Claude Code)
 - **Iteration** -- A single invocation of the agent, producing at most one commit
@@ -22,15 +22,22 @@ Sandcastle is a TypeScript CLI tool that orchestrates AI coding agents inside is
 npm install --save-dev @ai-hero/sandcastle
 ```
 
+To test an unreleased GitHub branch without building a local tarball, install
+that branch directly. npm builds the package before installing it:
+
+```bash
+npm install --save-dev github:liumingjian/sandcastle#codex/issue-1-host-first-init
+```
+
 ### 2. Initialize
 
-Run `npx @ai-hero/sandcastle init` in your repository to scaffold the config directory:
+Install and authenticate Claude Code or Codex on your host, then initialize the repository:
 
 ```bash
 npx @ai-hero/sandcastle init
 ```
 
-This creates a `.sandcastle/` directory with a Dockerfile, prompt file, and configuration.
+Choose **No sandbox**, the first and preselected option, and explicitly submit the selection. Sandcastle creates `.sandcastle/` prompts and a host-run configuration that reuses the selected CLI's authentication. Non-interactive runs must pass `--sandbox no-sandbox` explicitly.
 
 ### 3. Run
 
@@ -38,4 +45,17 @@ This creates a `.sandcastle/` directory with a Dockerfile, prompt file, and conf
 npx tsx .sandcastle/main.ts
 ```
 
-Sandcastle will build the Docker image, sync your code into the sandbox, and start the agent.
+Sandcastle starts the selected host CLI in a git worktree and merges successful changes according to the generated branch strategy.
+
+## Host Trust Boundary
+
+No-sandbox runs the agent as your host user, with access to that user's files and processes. Generated Claude Code and Codex configurations use their AI-mediated approval modes, but approval review and git worktrees are not complete filesystem isolation. A process abandoned after a timeout may continue running on the host.
+
+## Other Sandbox Providers
+
+- **Docker:** choose `--sandbox docker`, then build the generated Dockerfile with `sandcastle docker build-image`.
+- **Podman:** choose `--sandbox podman`, then build the generated Containerfile with `sandcastle podman build-image`.
+- **Vercel:** configure the `vercel()` provider and `@vercel/sandbox` credentials for a remote microVM.
+- **Custom:** implement a bind-mount or isolated provider for your own environment.
+
+Container image files, build commands, and dependency-install hooks belong to those provider-specific paths; initializing or upgrading Sandcastle does not remove existing configurations or containerfiles.

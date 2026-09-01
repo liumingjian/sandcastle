@@ -791,24 +791,27 @@ export const codex = (
     // dropped in favour of `-a on-request`. `-s danger-full-access` disables
     // Codex's own filesystem sandbox — Sandcastle owns that boundary, and
     // here the reviewer agent owns the per-action approval boundary.
-    const approvalsFlags =
-      options?.approvalsReviewer === "auto_review"
-        ? ` -a on-request -s danger-full-access -c ${shellEscape(`approvals_reviewer="auto_review"`)}`
-        : " --dangerously-bypass-approvals-and-sandbox";
+    const autoReview = options?.approvalsReviewer === "auto_review";
+    // `-a` is a top-level Codex option, so it must precede the `exec` verb.
+    // The remaining flags are also accepted by the exec subcommand.
+    const globalApprovalsFlag = autoReview ? " -a on-request" : "";
+    const execApprovalsFlags = autoReview
+      ? ` -s danger-full-access -c ${shellEscape(`approvals_reviewer="auto_review"`)}`
+      : " --dangerously-bypass-approvals-and-sandbox";
     // Codex distinguishes fork from resume at the verb level — `codex exec
     // fork <id>` leaves the parent rollout intact; `codex exec resume <id>`
     // appends to it. See ADR 0018.
     let base: string;
     if (resumeSession && forkSession) {
-      base = `codex exec fork ${shellEscape(resumeSession)}`;
+      base = `codex${globalApprovalsFlag} exec fork ${shellEscape(resumeSession)}`;
     } else if (resumeSession) {
-      base = `codex exec resume ${shellEscape(resumeSession)}`;
+      base = `codex${globalApprovalsFlag} exec resume ${shellEscape(resumeSession)}`;
     } else {
-      base = "codex exec";
+      base = `codex${globalApprovalsFlag} exec`;
     }
     const stdinArg = resumeSession ? " -" : "";
     return {
-      command: `${base} --json${approvalsFlags} -m ${shellEscape(model)}${effortFlag}${stdinArg}`,
+      command: `${base} --json${execApprovalsFlags} -m ${shellEscape(model)}${effortFlag}${stdinArg}`,
       stdin: prompt,
     };
   },
